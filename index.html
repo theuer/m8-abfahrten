@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>M8 Abfahrten</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+  /* Layout: zwei feste Abfahrtstafeln nebeneinander (am Handy untereinander) */
+  :root {
+    --bg: #f6f5ef; --panel: #ffffff; --fg: #1d1d1b; --muted: #6b6a62;
+    --line: #e2e0d6; --tram: #be1414; --ok: #1f7a3a; --warn: #b26a00; --bad: #c0261a;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15140f; --panel: #1f1e18; --fg: #f1efe6; --muted: #a3a194;
+      --line: #34322a; --tram: #e04848; --ok: #4cc070; --warn: #f0a83a; --bad: #ff6a5c; color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 var(--sans); }
+  .wrap { max-width: 900px; margin: 0 auto;
+    padding-block: max(20px, env(safe-area-inset-top)) 40px;
+    padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+  header { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; margin-bottom: 18px; }
+  .badge { background: var(--tram); color: #fff; font: 600 20px/1 var(--sans); padding: 8px 12px; border-radius: 6px; }
+  h1 { font-size: 20px; margin: 0; flex: 1 1 auto; }
+  .bar { display: flex; gap: 10px; align-items: center; }
+  button { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 6px; padding: 8px 12px; min-height: 40px; cursor: pointer; }
+  button:focus-visible { outline: 2px solid var(--tram); outline-offset: 2px; }
+  .status { font-size: 13px; color: var(--muted); }
+  .status.err { color: var(--bad); }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+  section h2 { margin: 0; padding: 12px 14px; font-size: 16px; border-bottom: 1px solid var(--line); }
+  section h2 span { display: block; color: var(--muted); font-weight: 400; font-size: 13px; }
+  .err-box { padding: 10px 14px; color: var(--bad); font-size: 13px; border-bottom: 1px solid var(--line); }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { display: grid; grid-template-columns: 64px 1fr auto; gap: 10px; align-items: baseline;
+    padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  li:last-child { border-bottom: 0; }
+  .min { font: 500 22px/1 var(--mono); font-variant-numeric: tabular-nums; }
+  .min small { font-size: 12px; color: var(--muted); margin-left: 2px; }
+  .info { min-width: 0; }
+  .dir { font-size: 14px; overflow-wrap: anywhere; }
+  .time { font: 500 13px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .time s { opacity: .7; }
+  .delay { font: 600 12px var(--sans); padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
+  .d-ok { color: var(--ok); border: 1px solid var(--ok); }
+  .d-warn { color: var(--warn); border: 1px solid var(--warn); }
+  .d-bad { color: var(--bad); border: 1px solid var(--bad); }
+  .d-none { color: var(--muted); border: 1px solid var(--line); }
+  .cancel .min, .cancel .time { text-decoration: line-through; color: var(--bad); }
+  .empty { display: block; padding: 16px 14px; color: var(--muted); }
+  .remarks { margin-top: 18px; display: grid; gap: 8px; }
+  .remark { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--warn);
+    border-radius: 6px; padding: 10px 12px; font-size: 13px; }
+  footer { margin-top: 22px; font-size: 12px; color: var(--muted); }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="badge">M8</div>
+    <h1>Meine Abfahrten</h1>
+    <div class="bar">
+      <button id="refreshBtn" type="button">Aktualisieren</button>
+      <span id="status" class="status">Lädt…</span>
+    </div>
+  </header>
+
+  <div class="cols">
+    <section>
+      <h2>Mollstr./Prenzlauer Allee<span>Richtung S+U Hauptbahnhof</span></h2>
+      <div id="errA" class="err-box" hidden></div>
+      <ul id="listA"><li class="empty">Lädt…</li></ul>
+    </section>
+    <section>
+      <h2>S+U Hauptbahnhof<span>Richtung Ahrensfelde/Stadtgrenze</span></h2>
+      <div id="errB" class="err-box" hidden></div>
+      <ul id="listB"><li class="empty">Lädt…</li></ul>
+    </section>
+  </div>
+
+  <div id="remarks" class="remarks"></div>
+
+  <footer>
+    Daten: <a href="https://v6.bvg.transport.rest/" target="_blank" rel="noopener">v6.bvg.transport.rest</a> (inoffizielle, offene BVG-Schnittstelle).
+    Aktualisiert sich alle 30 Sekunden. Störungen: <a href="https://www.bvg.de/de/verbindungen/stoerungsmeldungen" target="_blank" rel="noopener">bvg.de</a>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const LINE = "M8";
+  const REFRESH_MS = 30000;
+  const SHOW = 6;
+
+  // Die zwei festen Strecken. "toward" entscheidet, welche Bahnen angezeigt werden.
+  const BOARDS = [
+    { key: "A", query: "Mollstr./Prenzlauer Allee", match: /moll.*prenzlauer/i, toward: "west" },
+    { key: "B", query: "S+U Hauptbahnhof", match: /hauptbahnhof/i, id: "900003201", toward: "east" }
+  ];
+
+  // Zwei gleichwertige Server: antwortet einer nicht, wird der andere versucht
+  const BASES = ["https://v6.bvg.transport.rest", "https://v6.vbb.transport.rest"];
+  let baseIdx = 0;
+
+  async function getJSON(path) {
+    let lastErr;
+    for (let i = 0; i < BASES.length; i++) {
+      const b = BASES[(baseIdx + i) % BASES.length];
+      try {
+        const ctrl = new AbortController();
+        const to = setTimeout(() => ctrl.abort(), 8000);
+        const r = await fetch(b + path, { headers: { "Accept": "application/json" }, signal: ctrl.signal });
+        clearTimeout(to);
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const j = await r.json();
+        baseIdx = (baseIdx + i) % BASES.length;
+        return j;
+      } catch (e) { lastErr = e; }
+    }
+    if (location.protocol === "file:" && lastErr && /fetch|network|load/i.test(lastErr.message)) {
+      throw new Error("Browser blockiert Abruf aus lokaler Datei – bitte über eine Webadresse öffnen");
+    }
+    throw new Error(lastErr && lastErr.name === "AbortError" ? "Zeitüberschreitung, Server antwortet nicht" : (lastErr ? lastErr.message : "unbekannt"));
+  }
+
+  async function resolveStop(board) {
+    if (board.id) return board.id;
+    const res = await getJSON(`/locations?query=${encodeURIComponent(board.query)}&results=8&poi=false&addresses=false`);
+    const stops = (Array.isArray(res) ? res : []).filter(x => x.type === "stop" || x.type === "station");
+    const hit = stops.find(s => board.match.test(s.name) && s.products && s.products.tram)
+             || stops.find(s => board.match.test(s.name)) || stops[0];
+    if (!hit) throw new Error("Haltestelle nicht gefunden");
+    board.id = hit.id;
+    return hit.id;
+  }
+
+  // Ost = Richtung Ahrensfelde/Marzahn/Lichtenberg, West = Richtung Hauptbahnhof/Lüneburger Str.
+  // Westliche Ziele sind wenige und bekannt (auch Verlängerungen wie U Turmstr.); alles andere gilt als Ost.
+  // Geprüft wird nur das Endziel, weil "direction" bei Ersatzverkehr z. B. "Herzbergstraße -> Bus" lautet.
+  function direction(dep) {
+    const d = (dep.destination && dep.destination.name) || dep.direction || "";
+    if (/Hauptbahnhof|Lüneburger|Turmstr|Moabit|Nordbahnhof|Naturkunde|Invaliden|Rosenthaler|Lesser-Ury|Rathenower|Wedding/i.test(d)) return "west";
+    return "east";
+  }
+
+  const fmt = iso => iso ? new Date(iso).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : "–";
+
+  function row(dep) {
+    const li = document.createElement("li");
+    const when = dep.when || dep.plannedWhen;
+    const mins = Math.round((new Date(when) - Date.now()) / 60000);
+    if (dep.cancelled) li.className = "cancel";
+
+    const m = document.createElement("div"); m.className = "min";
+    m.textContent = mins <= 0 ? "jetzt" : String(mins);
+    if (mins > 0) { const s = document.createElement("small"); s.textContent = "min"; m.appendChild(s); }
+
+    const info = document.createElement("div"); info.className = "info";
+    const dir = document.createElement("div"); dir.className = "dir"; dir.textContent = dep.direction || "";
+    const t = document.createElement("div"); t.className = "time";
+    if (dep.delay && dep.plannedWhen && dep.when) {
+      const s = document.createElement("s"); s.textContent = fmt(dep.plannedWhen);
+      t.append(s, " " + fmt(dep.when));
+    } else t.textContent = fmt(when);
+    info.append(dir, t);
+
+    const b = document.createElement("span"); b.className = "delay";
+    if (dep.cancelled) { b.textContent = "fällt aus"; b.classList.add("d-bad"); }
+    else if (dep.delay == null) { b.textContent = "Plan"; b.classList.add("d-none"); }
+    else {
+      const dm = Math.round(dep.delay / 60);
+      b.textContent = dm <= 0 ? "pünktlich" : "+" + dm + " min";
+      b.classList.add(dm <= 1 ? "d-ok" : dm <= 4 ? "d-warn" : "d-bad");
+    }
+    li.append(m, info, b);
+    return li;
+  }
+
+  function fill(list, deps) {
+    list.replaceChildren();
+    if (!deps.length) {
+      const li = document.createElement("li"); li.className = "empty";
+      li.textContent = "Keine M8 in den nächsten 60 Minuten.";
+      list.appendChild(li); return;
+    }
+    deps.slice(0, SHOW).forEach(d => list.appendChild(row(d)));
+  }
+
+  async function loadBoard(board, warnings) {
+    const list = document.getElementById("list" + board.key);
+    const err = document.getElementById("err" + board.key);
+    try {
+      const id = await resolveStop(board);
+      const res = await getJSON(`/stops/${encodeURIComponent(id)}/departures?duration=60&results=80&linesOfStops=false&remarks=true`);
+      const deps = (Array.isArray(res) ? res : res.departures || [])
+        .filter(d => d.line && d.line.name === LINE && direction(d) === board.toward)
+        .sort((a, b) => new Date(a.when || a.plannedWhen) - new Date(b.when || b.plannedWhen));
+      fill(list, deps);
+      err.hidden = true;
+      deps.forEach(d => (d.remarks || []).forEach(r => {
+        if (r.type !== "warning") return;
+        const txt = (r.summary ? r.summary + ": " : "") + (r.text || "");
+        if (txt.trim()) warnings.add(txt);
+      }));
+      return true;
+    } catch (e) {
+      err.textContent = "Konnte nicht laden (" + e.message + ").";
+      err.hidden = false;
+      return false;
+    }
+  }
+
+  async function load() {
+    const status = document.getElementById("status");
+    status.className = "status"; status.textContent = "Aktualisiere…";
+    const warnings = new Set();
+    const ok = await Promise.all(BOARDS.map(b => loadBoard(b, warnings)));
+    const box = document.getElementById("remarks"); box.replaceChildren();
+    warnings.forEach(txt => { const d = document.createElement("div"); d.className = "remark"; d.textContent = txt; box.appendChild(d); });
+    if (ok.every(Boolean)) status.textContent = "Stand " + new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+    else { status.className = "status err"; status.textContent = "Neuer Versuch in 30 s"; }
+  }
+
+  let timer = setInterval(load, REFRESH_MS);
+  load();
+  document.getElementById("refreshBtn").addEventListener("click", load);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) { clearInterval(timer); }
+    else { load(); clearInterval(timer); timer = setInterval(load, REFRESH_MS); }
+  });
+})();
+</script>
+</body>
+</html>
