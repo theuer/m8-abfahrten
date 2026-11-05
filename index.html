@@ -53,6 +53,7 @@
   .d-bad { color: var(--bad); border: 1px solid var(--bad); }
   .d-none { color: var(--muted); border: 1px solid var(--line); }
   .cancel .min, .cancel .time { text-decoration: line-through; color: var(--bad); }
+  .suspect .min, .suspect .info { opacity: .5; }
   .empty { display: block; padding: 16px 14px; color: var(--muted); }
   .remarks { margin-top: 18px; display: grid; gap: 8px; }
   .remark { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--warn);
@@ -157,6 +158,7 @@
     const when = dep.when || dep.plannedWhen;
     const mins = Math.round((new Date(when) - Date.now()) / 60000);
     if (dep.cancelled) li.className = "cancel";
+    else if (dep._suspect) li.className = "suspect";
 
     const m = document.createElement("div"); m.className = "min";
     m.textContent = mins <= 0 ? "jetzt" : String(mins);
@@ -173,6 +175,7 @@
 
     const b = document.createElement("span"); b.className = "delay";
     if (dep.cancelled) { b.textContent = "fällt aus"; b.classList.add("d-bad"); }
+    else if (dep._suspect) { b.textContent = "fällt evtl. aus"; b.classList.add("d-warn"); }
     else if (dep.delay == null) { b.textContent = "Plan"; b.classList.add("d-none"); }
     else {
       const dm = Math.round(dep.delay / 60);
@@ -190,6 +193,10 @@
       li.textContent = "Keine M8 in den nächsten 60 Minuten.";
       list.appendChild(li); return;
     }
+    // Keine Live-Daten, aber eine spätere Bahn hat welche: Fahrt fällt wahrscheinlich aus
+    deps.forEach((d, i) => {
+      d._suspect = !d.cancelled && d.delay == null && deps.slice(i + 1).some(n => n.delay != null);
+    });
     deps.slice(0, SHOW).forEach(d => list.appendChild(row(d)));
   }
 
