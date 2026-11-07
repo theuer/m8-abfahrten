@@ -54,6 +54,7 @@
   .d-none { color: var(--muted); border: 1px solid var(--line); }
   .cancel .min, .cancel .time { text-decoration: line-through; color: var(--bad); }
   .suspect .min, .suspect .info { opacity: .5; }
+  .gone { color: var(--bad); font-size: 13px; padding-block: 10px; border-bottom: 1px solid var(--line); }
   .empty { display: block; padding: 16px 14px; color: var(--muted); }
   .remarks { margin-top: 18px; display: grid; gap: 8px; }
   .remark { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--warn);
@@ -151,14 +152,45 @@
     return "east";
   }
 
+  // Westlicher Linienabschnitt in Fahrtrichtung West, um Teilausfälle einzuordnen
+  const WEST_ORDER = [
+    [/Mollstr/i, "Mollstr."], [/Rosa-Luxemburg/i, "U Rosa-Luxemburg-Platz"], [/Rosenthaler/i, "U Rosenthaler Platz"],
+    [/Brunnenstr/i, "Brunnenstr./Invalidenstr."], [/Pappelplatz/i, "Pappelplatz"], [/Nordbahnhof/i, "S Nordbahnhof"],
+    [/Naturkunde/i, "U Naturkundemuseum"], [/Invalidenpark/i, "Invalidenpark"], [/Hauptbahnhof/i, "S+U Hauptbahnhof"],
+    [/Lesser-Ury/i, "Lesser-Ury-Weg"], [/Lüneburger/i, "Lüneburger Str."], [/Turmstr/i, "U Turmstr."]
+  ];
+  const HBF_IDX = 8;
+
+  // Stationen in der Reihenfolge, in der sie im Text vorkommen
+  function stopsInText(txt) {
+    return WEST_ORDER.map(([re, name], idx) => ({ idx, name, pos: txt.search(re) }))
+      .filter(s => s.pos >= 0).sort((a, b) => a.pos - b.pos);
+  }
+
+  // Ausfall an dieser Haltestelle (ganz oder hier gestrichen) und Teilausfall vor dem Ziel
+  function analyze(dep, board) {
+    const rem = dep.remarks || [];
+    dep._cancelled = !!dep.cancelled || rem.some(r => r.code === "text.realtime.stop.cancelled");
+    dep._endsAt = null;
+    if (dep._cancelled || board.toward !== "west") return;
+    rem.filter(r => r.code === "text.realtime.journey.partially.cancelled.between").forEach(r => {
+      const s = stopsInText(r.text || "");
+      if (s.length < 2) return;
+      const from = s[0], to = s[s.length - 1];
+      if (from.idx < HBF_IDX && to.idx >= HBF_IDX) {
+        if (from.idx <= 0) dep._cancelled = true;
+        else dep._endsAt = from.name;
+      }
+    });
+  }
+
   const fmt = iso => iso ? new Date(iso).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : "–";
 
   function row(dep) {
     const li = document.createElement("li");
     const when = dep.when || dep.plannedWhen;
     const mins = Math.round((new Date(when) - Date.now()) / 60000);
-    if (dep.cancelled) li.className = "cancel";
-    else if (dep._suspect) li.className = "suspect";
+    if (dep._endsAt || dep._suspect) li.className = "suspect";
 
     const m = document.createElement("div"); m.className = "min";
     m.textContent = mins <= 0 ? "jetzt" : String(mins);
@@ -174,7 +206,7 @@
     info.append(dir, t);
 
     const b = document.createElement("span"); b.className = "delay";
-    if (dep.cancelled) { b.textContent = "fällt aus"; b.classList.add("d-bad"); }
+    if (dep._endsAt) { b.textContent = "nur bis " + dep._endsAt; b.classList.add("d-bad"); }
     else if (dep._suspect) { b.textContent = "fällt evtl. aus"; b.classList.add("d-warn"); }
     else if (dep.delay == null) { b.textContent = "Plan"; b.classList.add("d-none"); }
     else {
@@ -186,16 +218,21 @@
     return li;
   }
 
-  function fill(list, deps) {
+  function note(list, text, cls) {
+    const li = document.createElement("li"); li.className = cls; li.textContent = text; list.appendChild(li);
+  }
+
+  // Ausgefallene Fahrten werden nicht aufgelistet, nur gezählt
+  function fill(list, all) {
     list.replaceChildren();
-    if (!deps.length) {
-      const li = document.createElement("li"); li.className = "empty";
-      li.textContent = "Keine M8 in den nächsten 60 Minuten.";
-      list.appendChild(li); return;
-    }
+    const deps = all.filter(d => !d._cancelled);
+    const gone = all.length - deps.length;
+    if (!all.length) { note(list, "Keine M8 in den nächsten 60 Minuten.", "empty"); return; }
+    if (!deps.length) { note(list, "Alle " + gone + " M8 in den nächsten 60 Minuten fallen aus.", "empty gone"); return; }
+    if (gone) note(list, gone === 1 ? "1 Fahrt fällt aus und wird nicht angezeigt." : gone + " Fahrten fallen aus und werden nicht angezeigt.", "empty gone");
     // Keine Live-Daten, aber eine spätere Bahn hat welche: Fahrt fällt wahrscheinlich aus
     deps.forEach((d, i) => {
-      d._suspect = !d.cancelled && d.delay == null && deps.slice(i + 1).some(n => n.delay != null);
+      d._suspect = d.delay == null && deps.slice(i + 1).some(n => n.delay != null);
     });
     deps.slice(0, SHOW).forEach(d => list.appendChild(row(d)));
   }
@@ -205,10 +242,11 @@
     const err = document.getElementById("err" + board.key);
     try {
       const id = await resolveStop(board);
-      const res = await getJSON(`/stops/${encodeURIComponent(id)}/departures?duration=60&results=80&linesOfStops=false&remarks=true`);
+      const res = await getJSON(`/stops/${encodeURIComponent(id)}/departures?duration=60&results=80&linesOfStops=false&remarks=true&language=de`);
       const deps = (Array.isArray(res) ? res : res.departures || [])
-        .filter(d => d.line && d.line.name === LINE && direction(d) === board.toward)
-        .sort((a, b) => new Date(a.when || a.plannedWhen) - new Date(b.when || b.plannedWhen));
+        .filter(d => d.line && d.line.name === LINE && direction(d) === board.toward);
+      deps.forEach(d => analyze(d, board));
+      deps.sort((a, b) => new Date(a.when || a.plannedWhen) - new Date(b.when || b.plannedWhen));
       fill(list, deps);
       err.hidden = true;
       deps.forEach(d => (d.remarks || []).forEach(r => {
