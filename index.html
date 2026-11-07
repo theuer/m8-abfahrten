@@ -52,7 +52,7 @@
   .d-warn { color: var(--warn); border: 1px solid var(--warn); }
   .d-bad { color: var(--bad); border: 1px solid var(--bad); }
   .d-none { color: var(--muted); border: 1px solid var(--line); }
-  .cancel .min, .cancel .time { text-decoration: line-through; color: var(--bad); }
+  .cancel .min, .cancel .info { text-decoration: line-through; opacity: .5; }
   .suspect .min, .suspect .info { opacity: .5; }
   .gone { color: var(--bad); font-size: 13px; padding-block: 10px; border-bottom: 1px solid var(--line); }
   .empty { display: block; padding: 16px 14px; color: var(--muted); }
@@ -190,7 +190,8 @@
     const li = document.createElement("li");
     const when = dep.when || dep.plannedWhen;
     const mins = Math.round((new Date(when) - Date.now()) / 60000);
-    if (dep._endsAt || dep._suspect) li.className = "suspect";
+    if (dep._cancelled) li.className = "cancel";
+    else if (dep._endsAt || dep._suspect) li.className = "suspect";
 
     const m = document.createElement("div"); m.className = "min";
     m.textContent = mins <= 0 ? "jetzt" : String(mins);
@@ -206,7 +207,8 @@
     info.append(dir, t);
 
     const b = document.createElement("span"); b.className = "delay";
-    if (dep._endsAt) { b.textContent = "nur bis " + dep._endsAt; b.classList.add("d-bad"); }
+    if (dep._cancelled) { b.textContent = "fällt aus"; b.classList.add("d-bad"); }
+    else if (dep._endsAt) { b.textContent = "nur bis " + dep._endsAt; b.classList.add("d-bad"); }
     else if (dep._suspect) { b.textContent = "fällt evtl. aus"; b.classList.add("d-warn"); }
     else if (dep.delay == null) { b.textContent = "Plan"; b.classList.add("d-none"); }
     else {
@@ -222,19 +224,22 @@
     const li = document.createElement("li"); li.className = cls; li.textContent = text; list.appendChild(li);
   }
 
-  // Ausgefallene Fahrten werden nicht aufgelistet, nur gezählt
+  // Ausgefallene Fahrten bleiben durchgestrichen in der Liste; es werden bis zu SHOW fahrende Bahnen gezeigt
   function fill(list, all) {
     list.replaceChildren();
-    const deps = all.filter(d => !d._cancelled);
-    const gone = all.length - deps.length;
     if (!all.length) { note(list, "Keine M8 in den nächsten 60 Minuten.", "empty"); return; }
-    if (!deps.length) { note(list, "Alle " + gone + " M8 in den nächsten 60 Minuten fallen aus.", "empty gone"); return; }
-    if (gone) note(list, gone === 1 ? "1 Fahrt fällt aus und wird nicht angezeigt." : gone + " Fahrten fallen aus und werden nicht angezeigt.", "empty gone");
+    const running = all.filter(d => !d._cancelled);
+    if (!running.length) note(list, "Alle M8 in den nächsten 60 Minuten fallen aus.", "empty gone");
     // Keine Live-Daten, aber eine spätere Bahn hat welche: Fahrt fällt wahrscheinlich aus
-    deps.forEach((d, i) => {
-      d._suspect = d.delay == null && deps.slice(i + 1).some(n => n.delay != null);
+    running.forEach((d, i) => {
+      d._suspect = d.delay == null && running.slice(i + 1).some(n => n.delay != null);
     });
-    deps.slice(0, SHOW).forEach(d => list.appendChild(row(d)));
+    let shown = 0;
+    for (const d of all) {
+      if (shown >= SHOW || list.children.length >= SHOW * 2) break;
+      list.appendChild(row(d));
+      if (!d._cancelled) shown++;
+    }
   }
 
   async function loadBoard(board, warnings) {
